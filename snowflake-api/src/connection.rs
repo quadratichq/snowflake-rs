@@ -145,14 +145,12 @@ impl Connection {
         ];
         get_params.extend_from_slice(extra_get_params);
 
-        let url = host
-            .and_then(|host| Some(host.to_string()))
-            .unwrap_or_else(|| {
-                format!(
-                    "https://{}.snowflakecomputing.com/{}",
-                    &account_identifier, context.path
-                )
-            });
+        let url = host.map(str::to_string).unwrap_or_else(|| {
+            format!(
+                "https://{}.snowflakecomputing.com/{}",
+                &account_identifier, context.path
+            )
+        });
         let url = Url::parse_with_params(&url, get_params)?;
 
         let mut headers = HeaderMap::new();
