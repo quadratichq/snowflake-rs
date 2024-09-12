@@ -118,6 +118,7 @@ pub struct Session {
     auth_tokens: Mutex<Option<AuthTokens>>,
     auth_type: AuthType,
     account_identifier: String,
+    host: Option<String>,
 
     warehouse: Option<String>,
     database: Option<String>,
@@ -145,6 +146,7 @@ impl Session {
         username: &str,
         role: Option<&str>,
         private_key_pem: &str,
+        host: Option<&str>,
     ) -> Self {
         // uppercase everything as this is the convention
         let account_identifier = account_identifier.to_uppercase();
@@ -168,6 +170,7 @@ impl Session {
             role,
             schema,
             password: None,
+            host: host.map(str::to_string),
         }
     }
 
@@ -183,6 +186,7 @@ impl Session {
         username: &str,
         role: Option<&str>,
         password: &str,
+        host: Option<&str>,
     ) -> Self {
         let account_identifier = account_identifier.to_uppercase();
 
@@ -205,7 +209,13 @@ impl Session {
             password,
             schema,
             private_key_pem: None,
+            host: host.map(str::to_string),
         }
+    }
+
+    pub fn with_host(mut self, host: Option<String>) -> Self {
+        self.host = host;
+        self
     }
 
     /// Get cached token or request a new one if old one has expired.
@@ -260,6 +270,7 @@ impl Session {
                     &[("delete", "true")],
                     Some(&tokens.session_token.auth_header()),
                     serde_json::Value::default(),
+                    self.host.as_deref(),
                 )
                 .await?;
 
@@ -336,6 +347,7 @@ impl Session {
                 &get_params,
                 None,
                 body,
+                self.host.as_deref(),
             )
             .await?;
         log::debug!("Auth response: {:?}", resp);
@@ -396,6 +408,7 @@ impl Session {
                 &[],
                 Some(&auth),
                 body,
+                self.host.as_deref(),
             )
             .await?;
 

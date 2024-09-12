@@ -123,6 +123,7 @@ impl Connection {
         extra_get_params: &[(&str, &str)],
         auth: Option<&str>,
         body: impl serde::Serialize,
+        host: Option<&str>,
     ) -> Result<R, ConnectionError> {
         let context = query_type.query_context();
 
@@ -144,10 +145,14 @@ impl Connection {
         ];
         get_params.extend_from_slice(extra_get_params);
 
-        let url = format!(
-            "https://{}.snowflakecomputing.com/{}",
-            &account_identifier, context.path
-        );
+        let url = host
+            .and_then(|host| Some(host.to_string()))
+            .unwrap_or_else(|| {
+                format!(
+                    "https://{}.snowflakecomputing.com/{}",
+                    &account_identifier, context.path
+                )
+            });
         let url = Url::parse_with_params(&url, get_params)?;
 
         let mut headers = HeaderMap::new();

@@ -235,15 +235,25 @@ pub struct CertificateArgs {
 pub struct SnowflakeApiBuilder {
     pub auth: AuthArgs,
     client: Option<ClientWithMiddleware>,
+    host: Option<String>,
 }
 
 impl SnowflakeApiBuilder {
     pub fn new(auth: AuthArgs) -> Self {
-        Self { auth, client: None }
+        Self {
+            auth,
+            client: None,
+            host: None,
+        }
     }
 
     pub fn with_client(mut self, client: ClientWithMiddleware) -> Self {
         self.client = Some(client);
+        self
+    }
+
+    pub fn with_host(mut self, uri: &str) -> Self {
+        self.host = Some(uri.to_string());
         self
     }
 
@@ -263,6 +273,7 @@ impl SnowflakeApiBuilder {
                 &self.auth.username,
                 self.auth.role.as_deref(),
                 &args.password,
+                self.host.as_deref(),
             ),
             AuthType::Certificate(args) => Session::cert_auth(
                 Arc::clone(&connection),
@@ -273,16 +284,16 @@ impl SnowflakeApiBuilder {
                 &self.auth.username,
                 self.auth.role.as_deref(),
                 &args.private_key_pem,
+                self.host.as_deref(),
             ),
         };
 
         let account_identifier = self.auth.account_identifier.to_uppercase();
 
-        Ok(SnowflakeApi::new(
-            Arc::clone(&connection),
-            session,
-            account_identifier,
-        ))
+        Ok(
+            SnowflakeApi::new(Arc::clone(&connection), session, account_identifier)
+                .with_host(self.host),
+        )
     }
 }
 
@@ -291,6 +302,7 @@ pub struct SnowflakeApi {
     connection: Arc<Connection>,
     session: Session,
     account_identifier: String,
+    host: Option<String>,
 }
 
 impl SnowflakeApi {
@@ -300,8 +312,16 @@ impl SnowflakeApi {
             connection,
             session,
             account_identifier,
+            host: None,
         }
     }
+
+    pub fn with_host(mut self, host: Option<String>) -> Self {
+        self.host = host.to_owned();
+        self.session = self.session.with_host(host);
+        self
+    }
+
     /// Initialize object with password auth. Authentication happens on the first request.
     pub fn with_password_auth(
         account_identifier: &str,
@@ -323,6 +343,7 @@ impl SnowflakeApi {
             username,
             role,
             password,
+            None,
         );
 
         let account_identifier = account_identifier.to_uppercase();
@@ -354,6 +375,7 @@ impl SnowflakeApi {
             username,
             role,
             private_key_pem,
+            None,
         );
 
         let account_identifier = account_identifier.to_uppercase();
@@ -505,6 +527,7 @@ impl SnowflakeApi {
                 &[],
                 Some(&parts.session_token_auth_header),
                 body,
+                self.host.as_deref(),
             )
             .await?;
 
