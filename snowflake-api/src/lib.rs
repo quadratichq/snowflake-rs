@@ -171,7 +171,7 @@ impl RawQueryResult {
         }
     }
 
-    fn flat_bytes_to_batches(bytes: Vec<Bytes>) -> Result<Vec<RecordBatch>, ArrowError> {
+    pub fn flat_bytes_to_batches(bytes: Vec<Bytes>) -> Result<Vec<RecordBatch>, ArrowError> {
         let mut res = vec![];
         for b in bytes {
             let mut batches = Self::bytes_to_batches(b)?;

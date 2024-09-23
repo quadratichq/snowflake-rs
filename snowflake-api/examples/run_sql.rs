@@ -104,9 +104,12 @@ async fn main() -> Result<()> {
         let resp = api.exec_raw(&args.sql, true).await?;
 
         if let RawQueryResult::Stream(mut bytes_stream) = resp {
+            let mut chunks = vec![];
             while let Some(bytes) = bytes_stream.next().await {
-                println!("Chunk: {:?}", bytes?);
+                chunks.push(bytes?);
             }
+            let batches = RawQueryResult::flat_bytes_to_batches(chunks)?;
+            println!("{}", pretty_format_batches(&batches).unwrap());
         }
     } else {
         match args.output {
