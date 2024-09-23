@@ -15,6 +15,7 @@ clippy::missing_panics_doc
 
 use std::fmt::{Display, Formatter};
 use std::io;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use arrow::error::ArrowError;
@@ -23,6 +24,7 @@ use arrow::record_batch::RecordBatch;
 use base64::Engine;
 use bytes::{Buf, Bytes};
 use futures::future::try_join_all;
+use futures::Stream;
 use regex::Regex;
 use reqwest_middleware::ClientWithMiddleware;
 use thiserror::Error;
@@ -150,6 +152,7 @@ pub enum RawQueryResult {
     /// Arrow IPC chunks
     /// see: <https://arrow.apache.org/docs/format/Columnar.html#serialization-and-interprocess-communication-ipc>
     Bytes(Vec<Bytes>),
+    Stream(Pin<Box<dyn Stream<Item = std::result::Result<Bytes, reqwest::Error>>>>),
     /// Json payload is deserialized,
     /// as it's already a part of REST response
     Json(JsonResult),
@@ -162,6 +165,7 @@ impl RawQueryResult {
             RawQueryResult::Bytes(bytes) => {
                 Self::flat_bytes_to_batches(bytes).map(QueryResult::Arrow)
             }
+            RawQueryResult::Stream(_) => todo!(),
             RawQueryResult::Json(j) => Ok(QueryResult::Json(j)),
             RawQueryResult::Empty => Ok(QueryResult::Empty),
         }
@@ -401,7 +405,7 @@ impl SnowflakeApi {
     /// Execute a single query against API.
     /// If statement is PUT, then file will be uploaded to the Snowflake-managed storage
     pub async fn exec(&self, sql: &str) -> Result<QueryResult, SnowflakeApiError> {
-        let raw = self.exec_raw(sql).await?;
+        let raw = self.exec_raw(sql, false).await?;
         let res = raw.deserialize_arrow()?;
         Ok(res)
     }
@@ -409,7 +413,11 @@ impl SnowflakeApi {
     /// Executes a single query against API.
     /// If statement is PUT, then file will be uploaded to the Snowflake-managed storage
     /// Returns raw bytes in the Arrow response
-    pub async fn exec_raw(&self, sql: &str) -> Result<RawQueryResult, SnowflakeApiError> {
+    pub async fn exec_raw(
+        &self,
+        sql: &str,
+        stream: bool,
+    ) -> Result<RawQueryResult, SnowflakeApiError> {
         let put_re = Regex::new(r"(?i)^(?:/\*.*\*/\s*)*put\s+").unwrap();
 
         // put commands go through a different flow and result is side-effect
@@ -417,7 +425,7 @@ impl SnowflakeApi {
             log::info!("Detected PUT query");
             self.exec_put(sql).await.map(|()| RawQueryResult::Empty)
         } else {
-            self.exec_arrow_raw(sql).await
+            self.exec_arrow_raw(sql, stream).await
         }
     }
 
@@ -451,11 +459,19 @@ impl SnowflakeApi {
             .await
     }
 
-    async fn exec_arrow_raw(&self, sql: &str) -> Result<RawQueryResult, SnowflakeApiError> {
+    async fn exec_arrow_raw(
+        &self,
+        sql: &str,
+        stream: bool,
+    ) -> Result<RawQueryResult, SnowflakeApiError> {
+        if stream {
+            let bytes_stream = self.run_sql_stream(sql, QueryType::ArrowQuery).await?;
+            return Ok(RawQueryResult::Stream(Box::pin(bytes_stream)));
+        }
+
         let resp = self
             .run_sql::<ExecResponse>(sql, QueryType::ArrowQuery)
             .await?;
-        log::debug!("Got query response: {:?}", resp);
 
         let resp = match resp {
             // processable response
@@ -532,5 +548,37 @@ impl SnowflakeApi {
             .await?;
 
         Ok(resp)
+    }
+
+    async fn run_sql_stream(
+        &self,
+        sql_text: &str,
+        query_type: QueryType,
+    ) -> Result<impl Stream<Item = std::result::Result<Bytes, reqwest::Error>>, SnowflakeApiError>
+    {
+        log::debug!("Executing: {}", sql_text);
+
+        let parts = self.session.get_token().await?;
+
+        let body = ExecRequest {
+            sql_text: sql_text.to_string(),
+            async_exec: false,
+            sequence_id: parts.sequence_id,
+            is_internal: false,
+        };
+
+        let resp = self
+            .connection
+            .send_request(
+                query_type,
+                &self.account_identifier,
+                &[],
+                Some(&parts.session_token_auth_header),
+                body,
+                self.host.as_deref(),
+            )
+            .await?;
+
+        Ok(resp.bytes_stream())
     }
 }

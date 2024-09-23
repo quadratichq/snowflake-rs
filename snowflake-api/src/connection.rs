@@ -1,4 +1,5 @@
 use reqwest::header::{self, HeaderMap, HeaderName, HeaderValue};
+use reqwest::Response;
 use reqwest_middleware::ClientWithMiddleware;
 use reqwest_retry::policies::ExponentialBackoff;
 use reqwest_retry::RetryTransientMiddleware;
@@ -113,10 +114,7 @@ impl Connection {
             .with(RetryTransientMiddleware::new_with_policy(retry_policy)))
     }
 
-    /// Perform request of given query type with extra body or parameters
-    // todo: implement soft error handling
-    // todo: is there better way to not repeat myself?
-    pub async fn request<R: serde::de::DeserializeOwned>(
+    pub async fn send_request(
         &self,
         query_type: QueryType,
         account_identifier: &str,
@@ -124,7 +122,7 @@ impl Connection {
         auth: Option<&str>,
         body: impl serde::Serialize,
         host: Option<&str>,
-    ) -> Result<R, ConnectionError> {
+    ) -> Result<Response, ConnectionError> {
         let context = query_type.query_context();
 
         let request_id = Uuid::new_v4();
@@ -163,13 +161,38 @@ impl Connection {
             headers.append(header::AUTHORIZATION, auth_val);
         }
 
-        // todo: persist client to use connection polling
         let resp = self
             .client
             .post(url)
             .headers(headers)
             .json(&body)
             .send()
+            .await?;
+
+        Ok(resp)
+    }
+
+    /// Perform request of given query type with extra body or parameters
+    // todo: implement soft error handling
+    // todo: is there better way to not repeat myself?
+    pub async fn request<R: serde::de::DeserializeOwned>(
+        &self,
+        query_type: QueryType,
+        account_identifier: &str,
+        extra_get_params: &[(&str, &str)],
+        auth: Option<&str>,
+        body: impl serde::Serialize,
+        host: Option<&str>,
+    ) -> Result<R, ConnectionError> {
+        let resp = self
+            .send_request(
+                query_type,
+                account_identifier,
+                extra_get_params,
+                auth,
+                body,
+                host,
+            )
             .await?;
 
         Ok(resp.json::<R>().await?)

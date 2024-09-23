@@ -2,10 +2,11 @@ extern crate snowflake_api;
 
 use anyhow::Result;
 use arrow::util::pretty::pretty_format_batches;
-use clap::Parser;
+use clap::{ArgAction, Parser};
+use futures_util::StreamExt;
 use std::fs;
 
-use snowflake_api::{QueryResult, SnowflakeApi};
+use snowflake_api::{QueryResult, RawQueryResult, SnowflakeApi};
 
 #[derive(clap::ValueEnum, Clone, Debug)]
 enum Output {
@@ -56,6 +57,12 @@ struct Args {
     #[arg(long)]
     #[arg(value_enum, default_value_t = Output::Arrow)]
     output: Output,
+
+    #[arg(long)]
+    host: Option<String>,
+
+    #[clap(long, action = ArgAction::Set)]
+    stream: bool,
 }
 
 #[tokio::main]
@@ -89,30 +96,42 @@ async fn main() -> Result<()> {
         _ => {
             panic!("Either private key path or password must be set")
         }
-    };
+    }
+    // add optional host
+    .with_host(args.host);
 
-    match args.output {
-        Output::Arrow => {
-            let res = api.exec(&args.sql).await?;
-            match res {
-                QueryResult::Arrow(a) => {
-                    println!("{}", pretty_format_batches(&a).unwrap());
-                }
-                QueryResult::Json(j) => {
-                    println!("{j}");
-                }
-                QueryResult::Empty => {
-                    println!("Query finished successfully")
-                }
+    if args.stream {
+        let resp = api.exec_raw(&args.sql, true).await?;
+
+        if let RawQueryResult::Stream(mut bytes_stream) = resp {
+            while let Some(bytes) = bytes_stream.next().await {
+                println!("Chunk: {:?}", bytes?);
             }
         }
-        Output::Json => {
-            let res = api.exec_json(&args.sql).await?;
-            println!("{res}");
-        }
-        Output::Query => {
-            let res = api.exec_response(&args.sql).await?;
-            println!("{:?}", res);
+    } else {
+        match args.output {
+            Output::Arrow => {
+                let res = api.exec(&args.sql).await?;
+                match res {
+                    QueryResult::Arrow(a) => {
+                        println!("{}", pretty_format_batches(&a).unwrap());
+                    }
+                    QueryResult::Json(j) => {
+                        println!("{j}");
+                    }
+                    QueryResult::Empty => {
+                        println!("Query finished successfully")
+                    }
+                }
+            }
+            Output::Json => {
+                let res = api.exec_json(&args.sql).await?;
+                println!("{res}");
+            }
+            Output::Query => {
+                let res = api.exec_response(&args.sql).await?;
+                println!("{:?}", res);
+            }
         }
     }
 

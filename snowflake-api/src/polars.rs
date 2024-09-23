@@ -25,6 +25,7 @@ impl RawQueryResult {
     pub fn to_polars(self) -> Result<DataFrame, PolarsCastError> {
         match self {
             RawQueryResult::Bytes(bytes) => dataframe_from_bytes(bytes),
+            RawQueryResult::Stream(_bytes_stream) => todo!(),
             RawQueryResult::Json(json) => dataframe_from_json(&json),
             RawQueryResult::Empty => Ok(DataFrame::empty()),
         }
