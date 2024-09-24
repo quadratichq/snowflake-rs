@@ -165,7 +165,6 @@ impl RawQueryResult {
     pub fn deserialize_arrow(self) -> Result<QueryResult, ArrowError> {
         match self {
             RawQueryResult::Bytes(bytes) => {
-                println!("{:?}", bytes);
                 Self::flat_bytes_to_batches(bytes).map(QueryResult::Arrow)
             }
             RawQueryResult::Stream(_) => unimplemented!(),
