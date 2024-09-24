@@ -43,7 +43,7 @@ pub mod connection;
 mod polars;
 mod put;
 mod requests;
-mod responses;
+pub mod responses;
 mod session;
 
 #[derive(Error, Debug)]
@@ -165,9 +165,10 @@ impl RawQueryResult {
     pub fn deserialize_arrow(self) -> Result<QueryResult, ArrowError> {
         match self {
             RawQueryResult::Bytes(bytes) => {
+                println!("{:?}", bytes);
                 Self::flat_bytes_to_batches(bytes).map(QueryResult::Arrow)
             }
-            RawQueryResult::Stream(_) => todo!(),
+            RawQueryResult::Stream(_) => unimplemented!(),
             RawQueryResult::Json(j) => Ok(QueryResult::Json(j)),
             RawQueryResult::Empty => Ok(QueryResult::Empty),
         }
@@ -475,6 +476,13 @@ impl SnowflakeApi {
             .run_sql::<ExecResponse>(sql, QueryType::ArrowQuery)
             .await?;
 
+        self.parse_arrow_raw_response(resp).await
+    }
+
+    pub async fn parse_arrow_raw_response(
+        &self,
+        resp: ExecResponse,
+    ) -> Result<RawQueryResult, SnowflakeApiError> {
         let resp = match resp {
             // processable response
             ExecResponse::Query(qr) => Ok(qr),

@@ -6,7 +6,7 @@ use clap::{ArgAction, Parser};
 use futures_util::StreamExt;
 use std::fs;
 
-use snowflake_api::{QueryResult, RawQueryResult, SnowflakeApi};
+use snowflake_api::{responses::ExecResponse, QueryResult, RawQueryResult, SnowflakeApi};
 
 #[derive(clap::ValueEnum, Clone, Debug)]
 enum Output {
@@ -108,8 +108,15 @@ async fn main() -> Result<()> {
             while let Some(bytes) = bytes_stream.next().await {
                 chunks.push(bytes?);
             }
-            let batches = RawQueryResult::flat_bytes_to_batches(chunks)?;
-            println!("{}", pretty_format_batches(&batches).unwrap());
+
+            let bytes = chunks.into_iter().flatten().collect::<Vec<u8>>();
+            let resp = serde_json::from_slice::<ExecResponse>(&bytes).unwrap();
+            let raw_query_result = api.parse_arrow_raw_response(resp).await.unwrap();
+            let batches = raw_query_result.deserialize_arrow().unwrap();
+
+            if let QueryResult::Arrow(a) = batches {
+                println!("{}", pretty_format_batches(&a).unwrap());
+            }
         }
     } else {
         match args.output {
