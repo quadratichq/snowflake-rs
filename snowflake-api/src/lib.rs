@@ -19,7 +19,9 @@ use std::io;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use arrow::array::{Array, ArrayRef, Decimal128Array, Int32Array, Int64Array};
+use arrow::array::{
+    Array, ArrayRef, Decimal128Array, Int16Array, Int32Array, Int64Array, Int8Array,
+};
 use arrow::datatypes::{DataType, Field, Schema as ArrowSchema};
 use arrow::error::ArrowError;
 use arrow::ipc::reader::StreamReader;
@@ -266,41 +268,50 @@ impl RawQueryResult {
         RecordBatch::try_new(new_schema, new_columns)
     }
 
+    /// Helper function to convert integer values to decimal array
+    fn convert_int_values_to_decimal<T, I>(
+        int_values: I,
+        precision: u8,
+        scale: i8,
+    ) -> Result<ArrayRef, ArrowError>
+    where
+        T: Into<i128>,
+        I: Iterator<Item = Option<T>>,
+    {
+        let decimal_values: Result<Vec<Option<i128>>, ArrowError> = int_values
+            .map(|opt_val| opt_val.map(T::into).map(Ok).transpose())
+            .collect();
+
+        let decimal_array =
+            Decimal128Array::from(decimal_values?).with_precision_and_scale(precision, scale)?;
+        Ok(Arc::new(decimal_array))
+    }
+
     /// Convert an integer array to a decimal array with the given precision and scale
     fn convert_integer_to_decimal(
         array: &ArrayRef,
         precision: u8,
         scale: i8,
     ) -> Result<ArrayRef, ArrowError> {
+        /// Helper macro to reduce duplication in downcasting and converting
+        macro_rules! downcast_and_convert {
+            ($array_type:ty, $type_name:expr) => {{
+                let int_array = array
+                    .as_any()
+                    .downcast_ref::<$array_type>()
+                    .ok_or_else(|| {
+                        ArrowError::CastError(format!("Failed to downcast to {}", $type_name))
+                    })?;
+
+                Self::convert_int_values_to_decimal(int_array.iter(), precision, scale)
+            }};
+        }
+
         match array.data_type() {
-            DataType::Int32 => {
-                let int_array = array.as_any().downcast_ref::<Int32Array>().ok_or_else(|| {
-                    ArrowError::CastError("Failed to downcast to Int32Array".to_string())
-                })?;
-
-                let decimal_values: Result<Vec<Option<i128>>, ArrowError> = int_array
-                    .iter()
-                    .map(|opt_val| opt_val.map(i128::from).map(Ok).transpose())
-                    .collect();
-
-                let decimal_array = Decimal128Array::from(decimal_values?)
-                    .with_precision_and_scale(precision, scale)?;
-                Ok(Arc::new(decimal_array))
-            }
-            DataType::Int64 => {
-                let int_array = array.as_any().downcast_ref::<Int64Array>().ok_or_else(|| {
-                    ArrowError::CastError("Failed to downcast to Int64Array".to_string())
-                })?;
-
-                let decimal_values: Result<Vec<Option<i128>>, ArrowError> = int_array
-                    .iter()
-                    .map(|opt_val| opt_val.map(i128::from).map(Ok).transpose())
-                    .collect();
-
-                let decimal_array = Decimal128Array::from(decimal_values?)
-                    .with_precision_and_scale(precision, scale)?;
-                Ok(Arc::new(decimal_array))
-            }
+            DataType::Int8 => downcast_and_convert!(Int8Array, "Int8Array"),
+            DataType::Int16 => downcast_and_convert!(Int16Array, "Int16Array"),
+            DataType::Int32 => downcast_and_convert!(Int32Array, "Int32Array"),
+            DataType::Int64 => downcast_and_convert!(Int64Array, "Int64Array"),
             _ => {
                 // For non-integer types, try to keep the original array
                 Ok(Arc::clone(array))
@@ -719,7 +730,7 @@ impl SnowflakeApi {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow::array::{Int32Array, Int64Array};
+    use arrow::array::{Int16Array, Int32Array, Int64Array, Int8Array};
     use arrow::datatypes::{DataType, Field, Schema as ArrowSchema};
     use arrow::ipc::writer::StreamWriter;
     use arrow::record_batch::RecordBatch;
@@ -758,6 +769,42 @@ mod tests {
         assert!(decimal_array.is_null(2));
         assert_eq!(decimal_array.precision(), 15);
         assert_eq!(decimal_array.scale(), 4);
+    }
+
+    #[test]
+    fn test_convert_int8_to_decimal() {
+        let int_array = Int8Array::from(vec![Some(123), Some(-45), None, Some(78)]);
+        let array_ref: ArrayRef = Arc::new(int_array);
+
+        let result = RawQueryResult::convert_integer_to_decimal(&array_ref, 5, 2).unwrap();
+        assert_eq!(result.data_type(), &DataType::Decimal128(5, 2));
+
+        let decimal_array = result.as_any().downcast_ref::<Decimal128Array>().unwrap();
+        assert_eq!(decimal_array.len(), 4);
+        assert_eq!(decimal_array.value(0), 123);
+        assert_eq!(decimal_array.value(1), -45);
+        assert!(decimal_array.is_null(2));
+        assert_eq!(decimal_array.value(3), 78);
+        assert_eq!(decimal_array.precision(), 5);
+        assert_eq!(decimal_array.scale(), 2);
+    }
+
+    #[test]
+    fn test_convert_int16_to_decimal() {
+        let int_array = Int16Array::from(vec![Some(12345), Some(-6789), None, Some(1000)]);
+        let array_ref: ArrayRef = Arc::new(int_array);
+
+        let result = RawQueryResult::convert_integer_to_decimal(&array_ref, 38, 0).unwrap();
+        assert_eq!(result.data_type(), &DataType::Decimal128(38, 0));
+
+        let decimal_array = result.as_any().downcast_ref::<Decimal128Array>().unwrap();
+        assert_eq!(decimal_array.len(), 4);
+        assert_eq!(decimal_array.value(0), 12345);
+        assert_eq!(decimal_array.value(1), -6789);
+        assert!(decimal_array.is_null(2));
+        assert_eq!(decimal_array.value(3), 1000);
+        assert_eq!(decimal_array.precision(), 38);
+        assert_eq!(decimal_array.scale(), 0);
     }
 
     #[test]
