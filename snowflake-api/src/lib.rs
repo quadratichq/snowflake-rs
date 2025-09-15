@@ -173,7 +173,7 @@ impl RawQueryResult {
                 Self::flat_bytes_to_batches(bytes).map(QueryResult::Arrow)
             }
             RawQueryResult::BytesWithSchema(bytes, schema) => {
-                Self::flat_bytes_to_batches_with_schema(bytes, schema).map(QueryResult::Arrow)
+                Self::flat_bytes_to_batches_with_schema(bytes, &schema).map(QueryResult::Arrow)
             }
             RawQueryResult::Stream(_) => unimplemented!(),
             RawQueryResult::Json(j) => Ok(QueryResult::Json(j)),
@@ -192,13 +192,13 @@ impl RawQueryResult {
 
     pub fn flat_bytes_to_batches_with_schema(
         bytes: Vec<Bytes>,
-        schema: Vec<FieldSchema>,
+        schema: &[FieldSchema],
     ) -> Result<Vec<RecordBatch>, ArrowError> {
         let mut res = vec![];
         for b in bytes {
             let batches = Self::bytes_to_batches(b)?;
             for batch in batches {
-                let converted_batch = Self::convert_decimal_columns(batch, &schema)?;
+                let converted_batch = Self::convert_decimal_columns(&batch, schema)?;
                 res.push(converted_batch);
             }
         }
@@ -212,7 +212,7 @@ impl RawQueryResult {
 
     /// Convert integer columns to decimal columns based on Snowflake schema metadata
     fn convert_decimal_columns(
-        batch: RecordBatch,
+        batch: &RecordBatch,
         schema: &[FieldSchema],
     ) -> Result<RecordBatch, ArrowError> {
         let original_schema = batch.schema();
@@ -232,11 +232,21 @@ impl RawQueryResult {
                         (snowflake_field.precision, snowflake_field.scale)
                     {
                         // convert integer column to decimal
+                        let precision_u8 = u8::try_from(precision).map_err(|_| {
+                            ArrowError::InvalidArgumentError(format!(
+                                "Precision {precision} cannot be converted to u8"
+                            ))
+                        })?;
+                        let scale_i8 = i8::try_from(scale).map_err(|_| {
+                            ArrowError::InvalidArgumentError(format!(
+                                "Scale {scale} cannot be converted to i8"
+                            ))
+                        })?;
                         let decimal_column =
-                            Self::convert_integer_to_decimal(column, precision as u8, scale as i8)?;
+                            Self::convert_integer_to_decimal(column, precision_u8, scale_i8)?;
                         let decimal_field = Arc::new(Field::new(
                             field.name(),
-                            DataType::Decimal128(precision as u8, scale as i8),
+                            DataType::Decimal128(precision_u8, scale_i8),
                             field.is_nullable(),
                         ));
                         new_fields.push(decimal_field);
@@ -270,7 +280,7 @@ impl RawQueryResult {
 
                 let decimal_values: Result<Vec<Option<i128>>, ArrowError> = int_array
                     .iter()
-                    .map(|opt_val| opt_val.map(|val| val as i128).map(Ok).transpose())
+                    .map(|opt_val| opt_val.map(i128::from).map(Ok).transpose())
                     .collect();
 
                 let decimal_array = Decimal128Array::from(decimal_values?)
@@ -284,7 +294,7 @@ impl RawQueryResult {
 
                 let decimal_values: Result<Vec<Option<i128>>, ArrowError> = int_array
                     .iter()
-                    .map(|opt_val| opt_val.map(|val| val as i128).map(Ok).transpose())
+                    .map(|opt_val| opt_val.map(i128::from).map(Ok).transpose())
                     .collect();
 
                 let decimal_array = Decimal128Array::from(decimal_values?)
@@ -433,8 +443,9 @@ impl SnowflakeApi {
         }
     }
 
+    #[must_use]
     pub fn with_host(mut self, host: Option<String>) -> Self {
-        self.host = host.to_owned();
+        self.host.clone_from(&host);
         self.session = self.session.with_host(host);
         self
     }
@@ -795,7 +806,7 @@ mod tests {
         ];
 
         let result_batch =
-            RawQueryResult::convert_decimal_columns(batch, &snowflake_schema).unwrap();
+            RawQueryResult::convert_decimal_columns(&batch, &snowflake_schema).unwrap();
         let result_schema = result_batch.schema();
 
         assert_eq!(result_schema.fields().len(), 3);
@@ -856,7 +867,7 @@ mod tests {
             nullable: true,
         }];
         let result_batch =
-            RawQueryResult::convert_decimal_columns(batch, &snowflake_schema).unwrap();
+            RawQueryResult::convert_decimal_columns(&batch, &snowflake_schema).unwrap();
 
         assert_eq!(result_batch.schema().field(0).data_type(), &DataType::Int32);
     }
@@ -874,7 +885,7 @@ mod tests {
             nullable: true,
         }];
         let result_batch =
-            RawQueryResult::convert_decimal_columns(batch, &snowflake_schema).unwrap();
+            RawQueryResult::convert_decimal_columns(&batch, &snowflake_schema).unwrap();
 
         assert_eq!(result_batch.schema().field(0).data_type(), &DataType::Int32);
     }

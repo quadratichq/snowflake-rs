@@ -143,9 +143,7 @@ impl Connection {
         ];
         get_params.extend_from_slice(extra_get_params);
 
-        let base_url = host
-            .map(str::to_string)
-            .unwrap_or_else(|| format!("https://{}.snowflakecomputing.com", &account_identifier));
+        let base_url = host.map_or_else(|| format!("https://{}.snowflakecomputing.com", &account_identifier), str::to_string);
         let url = format!("{base_url}/{}", context.path);
         let url = Url::parse_with_params(&url, get_params)?;
 

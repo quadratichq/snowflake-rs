@@ -43,7 +43,7 @@ impl RawQueryResult {
                         // convert Arrow batches to Polars DataFrame
                         let mut df = DataFrame::empty();
                         for batch in batches {
-                            let batch_bytes = arrow_ipc_to_bytes(batch)?;
+                            let batch_bytes = arrow_ipc_to_bytes(&batch)?;
                             let df_chunk =
                                 IpcStreamReader::new(std::io::Cursor::new(batch_bytes)).finish()?;
                             df.vstack_mut(&df_chunk)?;
@@ -120,26 +120,27 @@ fn dataframe_from_bytes(bytes: Vec<Bytes>) -> Result<DataFrame, PolarsCastError>
     Ok(df)
 }
 
-/// Convert an Arrow RecordBatch back to bytes in IPC format
-fn arrow_ipc_to_bytes(batch: RecordBatch) -> Result<Vec<u8>, PolarsCastError> {
+/// Convert an Arrow `RecordBatch` back to bytes in IPC format
+fn arrow_ipc_to_bytes(batch: &RecordBatch) -> Result<Vec<u8>, PolarsCastError> {
     let mut buffer = Vec::new();
-    {
-        let mut writer = StreamWriter::try_new(&mut buffer, &batch.schema()).map_err(|e| {
-            PolarsCastError::PolarsError(polars_core::error::PolarsError::ComputeError(
-                e.to_string().into(),
-            ))
-        })?;
-        writer.write(&batch).map_err(|e| {
-            PolarsCastError::PolarsError(polars_core::error::PolarsError::ComputeError(
-                e.to_string().into(),
-            ))
-        })?;
-        writer.finish().map_err(|e| {
-            PolarsCastError::PolarsError(polars_core::error::PolarsError::ComputeError(
-                e.to_string().into(),
-            ))
-        })?;
-    }
+    let mut writer = StreamWriter::try_new(&mut buffer, &batch.schema()).map_err(|e| {
+        PolarsCastError::PolarsError(polars_core::error::PolarsError::ComputeError(
+            e.to_string().into(),
+        ))
+    })?;
+
+    writer.write(batch).map_err(|e| {
+        PolarsCastError::PolarsError(polars_core::error::PolarsError::ComputeError(
+            e.to_string().into(),
+        ))
+    })?;
+
+    writer.finish().map_err(|e| {
+        PolarsCastError::PolarsError(polars_core::error::PolarsError::ComputeError(
+            e.to_string().into(),
+        ))
+    })?;
+
     Ok(buffer)
 }
 
@@ -190,6 +191,7 @@ mod tests {
         // verify DataFrame structure
         assert_eq!(df.height(), 3);
         assert_eq!(df.width(), 1);
+
         let column_names = df.get_column_names();
         assert_eq!(column_names.len(), 1);
         assert_eq!(column_names[0].as_str(), "price");
