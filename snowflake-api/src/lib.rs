@@ -219,7 +219,7 @@ impl RawQueryResult {
         let mut new_fields: Vec<Arc<Field>> = Vec::new();
         let mut new_columns = Vec::new();
 
-        // Create a mapping of field names to their Snowflake schema info
+        // create a mapping of field names to their Snowflake schema info
         let schema_map: HashMap<&String, &FieldSchema> =
             schema.iter().map(|field| (&field.name, field)).collect();
 
@@ -231,7 +231,7 @@ impl RawQueryResult {
                     if let (Some(precision), Some(scale)) =
                         (snowflake_field.precision, snowflake_field.scale)
                     {
-                        // Convert integer column to decimal
+                        // convert integer column to decimal
                         let decimal_column =
                             Self::convert_integer_to_decimal(column, precision as u8, scale as i8)?;
                         let decimal_field = Arc::new(Field::new(
@@ -246,12 +246,13 @@ impl RawQueryResult {
                 }
             }
 
-            // Keep the original column if no conversion needed
+            // keep the original column if no conversion needed
             new_fields.push(Arc::clone(field));
             new_columns.push(Arc::clone(column));
         }
 
         let new_schema = Arc::new(ArrowSchema::new(new_fields));
+
         RecordBatch::try_new(new_schema, new_columns)
     }
 
